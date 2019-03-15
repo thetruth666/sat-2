@@ -41,6 +41,7 @@ struct Var {
 	int frequency = 0;
 	int back_frequency = 0;
 	int polarity = 0;
+	int back_polarity = 0;
 };
 
 #define MAX_BUFFER_SIZE 5000000

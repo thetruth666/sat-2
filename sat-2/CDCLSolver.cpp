@@ -141,9 +141,17 @@ clauses[i].isSat = unknown;
 //根据给定文字给变元赋值
 
 void CDCLSolver::restart_solver() {
+	//重启变元
 	for (int i = 0; i < nvar; i++) {
 		vars[i].value = 0;
 		vars[i].frequency = vars[i].back_frequency;
+		vars[i].polarity = vars[i].back_polarity;
+		vars[i].antecedent = -1;
+		vars[i].dlevel = 0;
+	}
+	//重启子句集
+	for (int j = 0; j < clauses.size(); j++) {
+		clauses[j].isSat = false;
 	}
 }
 void CDCLSolver::assign(Literal _literal, int _antecedent, int _dlevel) {
@@ -251,6 +259,7 @@ return unknown;
 }
 */
 int CDCLSolver::conflict_analysis(int dlevel) {
+	conflict_cnt++;
 	Clause learn_clause = clauses[antecedent_conflict];
 	int this_level_cnt = 0;
 	int back_dlevel = -1;
@@ -355,7 +364,7 @@ Literal CDCLSolver::pick_branch_var() {
 	int try_cnt = 0;
 	do {
 		//未赋值变量中根据频率选取
-		if (random_value > 4 || nAssigned < nvar / 2 || too_many_trys) {
+		if (!isRand && (random_value > probability || nAssigned < nvar / 2 || too_many_trys)) {
 			pick_counter++;
 			if (pick_counter == 20 * nvar) {
 				for (int i = 0; i < vars.size(); i++) {
@@ -603,6 +612,7 @@ void CDCLSolver::CDCL(int time_limit) {
 				result = unknown;
 				return;
 			}
+			cout << "conflict_cnt : " << conflict_cnt << endl;
 		} while (!all_vars_assigned());
 	}
 	result = satisfied;
@@ -633,7 +643,23 @@ cls_lit CDCLSolver::search_unit() {
 	}
 	return { -1, { -1, -1 } };
 }
-
+void CDCLSolver::set_model() {
+	int choose = 0;
+	cout << "采用选取分支模式 :(0:随机 1:频率 2:随机+频率(随机优先) 3:随机+频率(频率优先) 4:默认" << endl;
+	cin >> choose;
+	if (choose == 0) {
+		isRand = true;
+	}
+	else if (choose == 1) {
+		probability = 0;
+	}
+	else if (choose == 2) {
+		probability = 8;
+	}
+	else if (choose == 3) {
+		probability = 2;
+	}
+}
 /*
 int CDCLSolver::eliminate_unit() {
 //原cnf中是否有单元子句（删除单元子句？）
@@ -722,6 +748,8 @@ void CDCLSolver::solve(FILE *fp, int timelimit) {
 	CDCL(timelimit);
 	end = clock();
 	time_diff = difftime(end, start);
+	cout << "time_diff : " << time_diff << endl;
+	cout << "conflict_cnt : " << conflict_cnt << endl;
 	//show_result();
 }
 

@@ -15,6 +15,9 @@ private:
 	int nAssigned;
 	int pick_counter;
 	int result;
+	int probability = 3;
+	int conflict_cnt = 0;
+	bool isRand = false;
 	double time_diff;
 
 	std::random_device random_generator;
@@ -50,6 +53,7 @@ public:
 	void solve(FILE *fp, int time_limit);
 	//void result_to_file(FILE *fp);
 	void result_to_file(std::string filename);
+	void set_model();
 	void show_result();
 };
 

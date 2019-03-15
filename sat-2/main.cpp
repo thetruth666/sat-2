@@ -123,9 +123,11 @@ void print_sat_option() {
 	cout << "2 : 导入文件，文件格式为(xxx.cnf)." << endl;
 	cout << "3 : 打印cnf文件." << endl;
 	cout << "4 : 设置时间限制,默认为100000ms." << endl;
-	cout << "5 : 打印输出结果." << endl;
-	cout << "6 : 处理文件集合（.txt）." << endl;
+	cout << "5 : 设置选取分支变量模式." << endl;
+	cout << "6 : 打印输出结果." << endl;
 	cout << "7 : 检查结果正确性." << endl;
+	cout << "8 : 处理文件集合（.txt）." << endl;
+
 	cout << "0 : 关闭." << endl;
 }
 void choose_sat_option() {
@@ -137,10 +139,11 @@ start:
 	string filename;
 	string outname;
 	string set_filename;
-	int time_limit = 1000000;
+	int time_limit = 100000;
 	bool solved_flag = false;
+	int probability = 4;
 
-	if (i == 6) {
+	if (i == 8) {
 		cout << "输入文件名 : ";
 		cin >> set_filename;
 		std::ifstream set_file(set_filename);
@@ -200,8 +203,10 @@ start:
 			cin >> time_limit;
 			cout << "限定求解时间为 :" << time_limit << "ms" << endl;
 			break;
-
 		case 5:
+			solver.set_model();
+			break;
+		case 6:
 			cout << "打印输出结果如下 :" << endl;
 			solver.show_result();
 			break;

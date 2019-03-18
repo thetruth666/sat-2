@@ -291,11 +291,10 @@ bool Sudoku::check_file() {
 }
 
 bool Sudoku::cnf_to_table(string filename) {
-	ifstream file(filename, ios::in | ios::out | ios::app);
+	ifstream file("F:\\ ˝∂¿÷’≈Ã\\sat - 2\\sat - 2\\output\\" + filename, ios::in | ios::out | ios::app);
 	if (!file)
 		return false;
 	char buf[10];
-	char buff[10000];
 	int literal;
 	stringstream ss;
 	string tmp;

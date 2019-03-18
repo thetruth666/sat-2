@@ -9,16 +9,22 @@ class CDCLSolver {
 private:
 	std::vector<Var> vars;
 	std::vector<Clause> clauses;
-	int nvar;
-	int nclause;
-	int antecedent_conflict;
-	int nAssigned;
-	int pick_counter;
-	int result;
-	int probability = 3;
+
+	int antecedent_conflict = -1;
+	int nAssigned = 0;
+	int pick_counter = 0;
+	int result = unknown;
+
+	int probability = 4;
 	int conflict_cnt = 0;
+
+
+	int M = 2;             //子句长参数
+	int N = 7;             //极性参数
 	bool isRand = false;
-	double time_diff;
+	int learn_base = 100;
+
+	double time_diff = 0.0;
 
 	std::random_device random_generator;
 	std::mt19937 generator;
@@ -28,8 +34,8 @@ private:
 	//BCP
 	void CDCL(int time_limit);
 	cls_lit search_unit();
-	int begin_propagate();
-	int unit_propagate(int _dlevel, Literal lit, int antecedent);
+	bool begin_propagate();
+	bool unit_propagate(int _dlevel, Literal lit, int antecedent);
 
 	//子句学习和回溯函数
 	int conflict_analysis(int _dlevel);
@@ -40,7 +46,6 @@ private:
 	//文件的读取与输出
 	void parse_file(FILE *fp);
 	bool all_vars_assigned();
-
 
 
 

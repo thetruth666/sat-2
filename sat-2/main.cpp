@@ -139,7 +139,7 @@ start:
 	string filename;
 	string outname;
 	string set_filename;
-	int time_limit = 100000;
+	int time_limit = 10000000;
 	bool solved_flag = false;
 	int probability = 4;
 

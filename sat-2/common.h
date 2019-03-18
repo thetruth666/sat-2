@@ -36,12 +36,13 @@ struct Var {
 	int value = 0;                  //-1负 0未赋值 1 正
 	int dlevel = -1;
 	int antecedent = -1;
+	long priority = -1;          //优先级参考:（正极性 * 负极性）*N + (短子句数)*M
+	long back_priority = -1;
+	int pos = 0;
+	int neg = 0;
+	long length_score = 0;
 	std::vector<std::pair<int, int> > var_clauses;   // <int:子句pos bool:文字正负>
 
-	int frequency = 0;
-	int back_frequency = 0;
-	int polarity = 0;
-	int back_polarity = 0;
 };
 
 #define MAX_BUFFER_SIZE 5000000

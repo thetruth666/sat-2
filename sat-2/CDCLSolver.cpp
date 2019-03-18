@@ -1,9 +1,11 @@
 #include "CDCLSolver.h"
+#include <cassert>
 using namespace std;
 
 size_t mygetline(char** line, size_t *n, FILE *fp) {
 	char *buf = *line;
-	size_t c, i = 0;//i来记录字符串长度，c来存储字符
+	char c;
+	size_t i = 0;//i来记录字符串长度，c来存储字符
 	if (buf == NULL || *n == 0) {
 		*line = (char *)malloc(10);
 		buf = *line;
@@ -35,7 +37,7 @@ void CDCLSolver::parse_file(FILE *fp) {
 	do {
 		mygetline(&line, &len, fp);
 	} while (line[0] == 'c');
-
+	int nvar, nclause;
 	sscanf(line, "p cnf %d %d", &nvar, &nclause);
 	char *buffer = (char *)malloc(MAX_BUFFER_SIZE * sizeof(char));
 	char *last;
@@ -45,12 +47,6 @@ void CDCLSolver::parse_file(FILE *fp) {
 		cnt += fread(buffer + cnt, 1, 40960, fp);
 	}
 	buffer[cnt] = 0;
-
-	nAssigned = 0;
-	antecedent_conflict = -1;
-	pick_counter = 0;
-	result = unknown;
-	time_diff = 0;
 
 	clauses.clear();
 	clauses.resize(nclause);
@@ -65,16 +61,24 @@ void CDCLSolver::parse_file(FILE *fp) {
 		*buffer++ = 0;
 		literal = atoi(last);
 		if (literal == 0) {
+			//加上子句长度对变量决策的影响
+			int tmp_size = clauses[i].literals.size();
+			for (int j = 0; j < tmp_size; j++) {
+				vars[clauses[i].literals[j].var - 1].length_score += 20 - tmp_size;
+			}
 			i++;
 		}
 		else {
 			auto & v = vars[std::abs(literal) - 1];
-			v.frequency++;
-			v.polarity += (literal > 0 ? 1 : -1);
+			literal > 0 ? v.pos++ : v.neg++;
 			v.var_clauses.reserve(64);
 			v.var_clauses.push_back(make_pair(i, (literal > 0 ? 1 : -1)));
 			clauses[i].literals.emplace_back(std::abs(literal), (literal > 0 ? 1 : -1));
 		}
+	}
+	//初始化优先级
+	for (int i = 0; i < nvar; i++) {
+		vars[i].priority = N * (vars[i].pos * vars[i].neg) + M * vars[i].length_score;
 	}
 }
 /*
@@ -92,8 +96,8 @@ line.clear();
 else if (line.find("p cnf") != string::npos) {
 line.erase(0, 6);
 ss.str(line);
-ss >> nvar;
-ss >> nclause;
+ss >> vars.size();
+ss >> clauses.size();
 break;
 }
 }
@@ -104,9 +108,9 @@ antecedent_conflict = -1;
 pick_counter = 0;
 
 clauses.clear();
-clauses.resize(nclause);
+clauses.resize(clauses.size());
 vars.clear();
-vars.resize(nvar);
+vars.resize(vars.size());
 
 int literal;
 int i = 0;
@@ -130,22 +134,22 @@ i++;
 
 /*
 void CDCLSolver::reset_solver() {
-for (int i = 0; i < nvar; i++) {
+for (int i = 0; i < vars.size(); i++) {
 vars[i] = { 0, -1, -1, 0, 0, 0 };   //初始化变元
 }
-for (int i = 0; i < nclause; i++) {
+for (int i = 0; i < clauses.size(); i++) {
 clauses[i].isSat = unknown;
 }
 }
 */
 //根据给定文字给变元赋值
-
+//重启算法是否需要重启学习子句信息
 void CDCLSolver::restart_solver() {
 	//重启变元
-	for (int i = 0; i < nvar; i++) {
+	nAssigned = 0;
+	for (int i = 0; i < vars.size(); i++) {
 		vars[i].value = 0;
-		vars[i].frequency = vars[i].back_frequency;
-		vars[i].polarity = vars[i].back_polarity;
+		vars[i].back_priority = vars[i].priority = N * (vars[i].pos * vars[i].neg) + M * vars[i].length_score;
 		vars[i].antecedent = -1;
 		vars[i].dlevel = 0;
 	}
@@ -154,24 +158,30 @@ void CDCLSolver::restart_solver() {
 		clauses[j].isSat = false;
 	}
 }
+
 void CDCLSolver::assign(Literal _literal, int _antecedent, int _dlevel) {
+	assert(vars[_literal.var - 1].value == 0);
+	//cout << "assign : " << _literal.var * _literal.sign << "." << _antecedent << "." << _dlevel << endl;
 	vars[_literal.var - 1].value = _literal.sign;
 	vars[_literal.var - 1].antecedent = _antecedent;
 	vars[_literal.var - 1].dlevel = _dlevel;
 
-	vars[_literal.var - 1].back_frequency = vars[_literal.var - 1].frequency;
-	vars[_literal.var - 1].frequency = -1;
+	vars[_literal.var - 1].back_priority = vars[_literal.var - 1].priority;
+	vars[_literal.var - 1].priority = -1;
 	nAssigned++;
+	//cout << nAssigned << endl;
 }
 
 //返回变元赋值
 void CDCLSolver::undo_assign(int var_idx) {
+	assert(vars[var_idx].value != 0);
 	vars[var_idx].value = 0;
 	vars[var_idx].antecedent = -1;
 	vars[var_idx].dlevel = -1;
-
-	vars[var_idx].frequency = vars[var_idx].back_frequency;
+	//cout << "undoassign : " << var_idx + 1 << endl;
+	vars[var_idx].priority = vars[var_idx].back_priority;
 	nAssigned--;
+	//cout << nAssigned << endl;
 }
 
 /*
@@ -287,11 +297,16 @@ int CDCLSolver::conflict_analysis(int dlevel) {
 	//更新文字信息
 	for (int i = 0; i < learn_clause.literals.size(); i++) {
 		Literal lit = learn_clause.literals[i];
-		vars[lit.var - 1].polarity += lit.sign;
-		if (vars[lit.var - 1].frequency != -1) {
-			vars[lit.var - 1].frequency++;
+		if (lit.sign > 0)
+			vars[lit.var - 1].pos++;
+		else
+			vars[lit.var - 1].neg++;
+		//学习子句一般较长，当不能过分降低它的优先级,
+		vars[lit.var - 1].length_score += learn_base - learn_clause.literals.size();
+		if (vars[lit.var - 1].value == 0) {
+			vars[lit.var - 1].priority = N *(vars[lit.var - 1].pos * vars[lit.var - 1].neg) + M * vars[lit.var - 1].length_score;
 		}
-		vars[lit.var - 1].back_frequency++;
+		vars[lit.var - 1].back_priority = N *(vars[lit.var - 1].pos * vars[lit.var - 1].neg) + M * vars[lit.var - 1].length_score;
 		vars[lit.var - 1].var_clauses.push_back(make_pair((clauses.size() - 1), lit.sign));
 		if (vars[lit.var - 1].dlevel > back_dlevel && vars[lit.var - 1].dlevel != dlevel) {
 			back_dlevel = vars[lit.var - 1].dlevel;
@@ -326,7 +341,7 @@ Clause &CDCLSolver::resolve(Clause &learn_clause, int var_idx) {
 
 
 int CDCLSolver::back_jump(int back_dlevel) {
-	for (int i = 0; i < nvar; i++) {
+	for (int i = 0; i < vars.size(); i++) {
 		if (vars[i].dlevel > back_dlevel) {
 			for (int j = 0; j < vars[i].var_clauses.size(); j++) {
 				bool sat_falg = false;
@@ -352,61 +367,54 @@ int CDCLSolver::back_jump(int back_dlevel) {
 }
 
 bool CDCLSolver::all_vars_assigned() {
-	return nvar == nAssigned;
+	return vars.size() == nAssigned;
 }
 
 Literal CDCLSolver::pick_branch_var() {
 	//产生随机数
+	assert(!all_vars_assigned());
 	uniform_int_distribution<int> choose_branch(1, 10);
-	uniform_int_distribution<int> choose_literal(0, nvar - 1);
+	uniform_int_distribution<int> choose_literal(0, vars.size() - 1);
 	int random_value = choose_branch(generator);
 	bool too_many_trys = false;
 	int try_cnt = 0;
 	do {
 		//未赋值变量中根据频率选取
-		if (!isRand && (random_value > probability || nAssigned < nvar / 2 || too_many_trys)) {
+		if (!isRand && (random_value > probability || nAssigned < vars.size() / 2 || too_many_trys)) {
 			pick_counter++;
-			if (pick_counter == 20 * nvar) {
+			if (pick_counter == 20 * vars.size()) {
 				for (int i = 0; i < vars.size(); i++) {
-					vars[i].back_frequency /= 2;
-					if (vars[i].frequency != -1) {
-						vars[i].frequency /= 2;
+					vars[i].back_priority /= 2;
+					if (vars[i].value != 0) {
+						vars[i].priority /= 2;
 					}
 				}
 				pick_counter = 0;
 			}
-			int tmp_var;
-			int i = 0;
+			int tmp_var = 0;
 			//查找频率最大的未赋值项
-			for (i = 0; i < nvar; i++) {
-				if (vars[i].value == 0) {
+			for (int i = 0; i < vars.size(); i++) {
+				if (vars[i].value == 0 && vars[i].priority > vars[tmp_var].priority) {
 					tmp_var = i;
-					break;
-				}
-			}
-			for (int j = i; j < nvar; j++) {
-				if (vars[j].frequency > vars[tmp_var].frequency && vars[tmp_var].value == 0) {
-					tmp_var = j;
 				}
 			}
 			//给文字指派真值（根据极性）
-			if (vars[tmp_var].polarity >= 0) {
-				return
-					Literal{ tmp_var + 1, 1 };
+			if (vars[tmp_var].pos >= vars[tmp_var].neg) {
+				return Literal{ tmp_var + 1, 1 };
 			}
-			else return
-				Literal{ tmp_var + 1, -1 };
+			else
+				return Literal{ tmp_var + 1, -1 };
 		}
 		else {
 			//随机选取
-			while (try_cnt < 10 * nvar) {
+			while (try_cnt < 10 * vars.size()) {
 				int variable = choose_literal(generator);
-				if (vars[variable].frequency != -1) {
-					if (vars[variable].polarity >= 0) {
+				if (vars[variable].value == 0) {
+					if (vars[variable].pos >= vars[variable].neg) {
 						return Literal{ variable + 1, 1 };
 					}
-					else return
-						Literal{ variable + 1, -1 };
+					else
+						return Literal{ variable + 1, -1 };
 				}
 				try_cnt++;
 			}
@@ -418,7 +426,7 @@ Literal CDCLSolver::pick_branch_var() {
 void CDCLSolver::show_result() {
 	if (result == satisfied) {
 		cout << "SAT" << endl;
-		for (int i = 0; i < nvar; i++) {
+		for (int i = 0; i < vars.size(); i++) {
 			cout << vars[i].value * (i + 1) << ' ';
 		}
 		cout << endl;
@@ -436,7 +444,7 @@ void CDCLSolver::show_result() {
 	}
 }
 
-int CDCLSolver::unit_propagate(int _dlevel, Literal _lit, int antecedent) {
+bool CDCLSolver::unit_propagate(int _dlevel, Literal _lit, int antecedent) {
 	queue<cls_lit> units;
 
 	Literal ass_lit = _lit;
@@ -475,7 +483,7 @@ int CDCLSolver::unit_propagate(int _dlevel, Literal _lit, int antecedent) {
 				//出现矛盾子句
 				if (unsat_cnt == clauses[cls_idx].literals.size()) {
 					antecedent_conflict = cls_idx;
-					return unsatisfied;
+					return false;
 				}
 				//出现unit
 				if (unAssign_cnt == 1) {
@@ -483,8 +491,11 @@ int CDCLSolver::unit_propagate(int _dlevel, Literal _lit, int antecedent) {
 				}
 			}
 		}
-		//单没有单元子句存在时候
+		//当没有单元子句存在时候
 		bool unit_flag = false;
+		if (all_vars_assigned()) {
+			return true;
+		}
 		while (!units.empty()) {
 			ass_lit = units.front().lit;
 			if (vars[ass_lit.var - 1].value == 0) {
@@ -492,129 +503,128 @@ int CDCLSolver::unit_propagate(int _dlevel, Literal _lit, int antecedent) {
 				unit_flag = true;
 				break;
 			}
-			else {
+			else { //表示此单变量可能在别的传播中赋值了
 				units.pop();
 			}
 		}
+		//已经没有单子句了
 		if (unit_flag == false) {
 			break;
 		}
 	}
-	if (all_vars_assigned())
-		return satisfied;
 	antecedent_conflict = -1;
-	return unknown;
+	return true;
 }
 
-int CDCLSolver::begin_propagate() {
-	int begin_result = satisfied;
-
+//冲突，产生新单子句的情况均在unit-propagation解决，所以只要查看原单子句情况即可
+bool CDCLSolver::begin_propagate() {
+	bool begin_result = true;
+	Literal unit_var;;
+	queue<Literal> unit_queue;
 	for (int i = 0; i < clauses.size(); i++) {
-		if (clauses[i].isSat == true) {
-			continue;
-		}
-		Literal unAssign_var;
-		int unAssign_cnt = 0;
-		int unsat_cnt = 0;
-		for (int j = 0; j < clauses[i].literals.size(); j++) {
-			Literal lit = clauses[i].literals[j];
-			if (vars[lit.var - 1].value == lit.sign) {
-				clauses[i].isSat = true;
-				break;
-			}
-			else if (vars[lit.var - 1].value == 0) {
-				unAssign_cnt++;
-				unAssign_var = lit;
-			}
-			else
-				unsat_cnt++;
-		}
-		if (unsat_cnt == clauses[i].literals.size()) {
-			return unsatisfied;
-		}
-		else if (unAssign_cnt == 1) {
-			begin_result = unit_propagate(0, unAssign_var, -1);
-			if (begin_result == unsatisfied)
-				return unsatisfied;
-			else if (begin_result == unsatisfied)
-				return satisfied;
+		if (clauses[i].literals.size() == 1) {
+			unit_queue.push(clauses[i].literals[0]);
 		}
 	}
-	if (all_vars_assigned())
-		return satisfied;
-	return unknown;
+	while (!unit_queue.empty()) {
+		unit_var = unit_queue.front();
+		unit_queue.pop();
+		if (vars[unit_var.var - 1].value != 0) continue;
+		begin_result = unit_propagate(0, unit_var, -1);
+		if (begin_result == false) {
+			return false;
+		}
+	}
+	return true;
 }
+
 void CDCLSolver::CDCL(int time_limit) {
 	time_t start = clock();
 	int dlevel = 0;
 	Literal unit_literal;
-	int var_propagate_result = unknown;
+	int unit_result = false;
 	/*
 	if (eliminate_unit() == unsatisfied) {
 	return unsatisfied;
 	}
 	*/
 	//eliminate_unit 操作
-	var_propagate_result = begin_propagate();
+	unit_result = begin_propagate();
 	time_t end = clock();
 	if (difftime(end, start) > time_limit) {
 		result = unknown;
 		return;
 	}
-	if (var_propagate_result == unsatisfied) {
+	if (unit_result == false) {
 		result = unsatisfied;
 		return;
 	}
-	else if (var_propagate_result == satisfied) {
-		result = satisfied;
-		return;
-	}
 	else {
-		start = clock();
-		do {
-			//选择分支变量
-			Literal pick_lit;
-			int antecedent = -1;
+		if (all_vars_assigned()) {
+			result = satisfied;
+			return;
+		}
+	}
 
-			pick_lit = pick_branch_var();
-			dlevel++;
+	start = clock();
+	while (true) {
+		assert(nAssigned <= vars.size());
+		//选择分支变量
+		bool conflict_flag = false;
+		cls_lit ass_cls_lit = { -1, { -1, -1 } };
+		Literal pick_lit;
+		int antecedent = -1;
+		pick_lit = pick_branch_var();
+		//cout << "branch" << pick_lit.var * pick_lit.sign << endl;
+		dlevel++;
 
-			while (true) {
-				if (pick_lit.var == -1) {
+		while (true) {
+			unit_result = unit_propagate(dlevel, pick_lit, antecedent);
+			if (!unit_result) {
+				//出现矛盾在顶层直接输出不满足
+				if (dlevel == 0) {
+					result = unsatisfied;
+					return;
+				}
+				//出现矛盾不在顶层进行冲突学习
+				else {
+					int back_level = conflict_analysis(dlevel);
+					dlevel = back_jump(back_level);
+					conflict_flag = true;
+				}
+			}
+			//未出现矛盾
+			else {
+				if (all_vars_assigned()) {
+					result = satisfied;
+					return;
+				}
+			}
+			if (conflict_flag) {
+				ass_cls_lit = search_unit();
+				antecedent = ass_cls_lit.cls_idx;
+				pick_lit = ass_cls_lit.lit;
+				if (antecedent == -1) {
 					break;
 				}
-				else {
-					var_propagate_result = unit_propagate(dlevel, pick_lit, antecedent);
-					if (var_propagate_result == unsatisfied) {
-						if (dlevel == 0) {
-							result = unsatisfied;
-							return;
-						}
-						else {
-							int back_level = conflict_analysis(dlevel);
-							dlevel = back_jump(back_level);
-
-							cls_lit tmp = search_unit();
-							pick_lit = tmp.lit;
-							antecedent = tmp.cls_idx;
-						}
-					}
-					else if (var_propagate_result == satisfied) {
-						result = satisfied;
-						return;
-					}
-					else
-						break;
-				}
 			}
-			end = clock();
-			if (difftime(end, start) > time_limit) {
-				result = unknown;
-				return;
+			else {
+				break;
 			}
-			cout << "conflict_cnt : " << conflict_cnt << endl;
-		} while (!all_vars_assigned());
-	}
+		}
+		end = clock();
+		if (difftime(end, start) > time_limit) {
+			result = unknown;
+			return;
+		}
+		if (conflict_cnt > 1000) {
+			restart_solver();
+			conflict_cnt = 0;
+			dlevel = 0;
+			//cout << clauses.size() << endl;
+		}
+		//cout << "conflict_cnt : " << conflict_cnt << endl;
+	};
 	result = satisfied;
 	return;
 }
@@ -626,17 +636,18 @@ cls_lit CDCLSolver::search_unit() {
 		}
 		Literal unAssign_var;
 		int unAssign_cnt = 0;
-		for (int j = 0; j < clauses[i].literals.size(); j++) {
+		for (int j = clauses[i].literals.size() - 1; j > -1; j--) {
 			Literal lit = clauses[i].literals[j];
-			if (vars[lit.var - 1].value == lit.sign) {
+			/*if (vars[lit.var - 1].value == lit.sign) {
 				clauses[i].isSat = true;
 				break;
 			}
-			else if (vars[lit.var - 1].value == 0) {
+			else */if (vars[lit.var - 1].value == 0) {
 				unAssign_cnt++;
 				unAssign_var = lit;
 			}
 		}
+		//回溯后是否仍存在冲突？
 		if (unAssign_cnt == 1) {
 			return { i, unAssign_var };
 		}
@@ -645,7 +656,7 @@ cls_lit CDCLSolver::search_unit() {
 }
 void CDCLSolver::set_model() {
 	int choose = 0;
-	cout << "采用选取分支模式 :(0:随机 1:频率 2:随机+频率(随机优先) 3:随机+频率(频率优先) 4:默认" << endl;
+	cout << "采用选取分支模式 :(0:随机 1:加权 2:随机+加权(随机优先) 3:随机+加权(加权优先) 4:默认" << endl;
 	cin >> choose;
 	if (choose == 0) {
 		isRand = true;
@@ -680,7 +691,7 @@ int cls_idx = vars[lit.var - 1].var_clauses[i].first;
 if (lit.sign == vars[lit.var - 1].var_clauses[i].second) {
 clauses[cls_idx].isSat = true;
 //clauses.erase(clauses.begin() + cls_idx);
-nclause--;
+clauses.size()--;
 }
 //否则去统计并储存unit_cls
 else {
@@ -701,7 +712,7 @@ return unsatisfied;
 if (unAssign_cnt == 1) {
 assign(unAssign_var, clause_idx, 0);
 clauses.erase(clauses.begin() + clause_idx);
-nclause--;
+clauses.size()--;
 units.push(unit_var);
 }
 }
@@ -723,7 +734,9 @@ return unknown;
 }
 */
 void CDCLSolver::result_to_file(string filename) {
-	std::ofstream file(filename);
+	std::ofstream file("F:\\数独终盘\\sat-2\\sat-2\\output\\" + filename);
+	if (!file)
+		exit(0);
 	if (result == unsatisfied) {
 		file << "s 0" << endl;
 		file << "t " << time_diff << "ms" << endl;
@@ -734,7 +747,7 @@ void CDCLSolver::result_to_file(string filename) {
 	else {
 		file << "s 1" << endl;
 		file << "v ";
-		for (int i = 0; i < nvar; i++) {
+		for (int i = 0; i < vars.size(); i++) {
 			file << vars[i].value * (i + 1) << ' ';
 		}
 		file << '0' << endl;
